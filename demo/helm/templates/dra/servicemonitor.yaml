@@ -1,0 +1,24 @@
+{{- if and (eq .Values.preset "dra") .Values.dra.monitoring.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "llm-d-inference-sim-demo.fullname" . }}-svm
+  namespace: {{ .Values.dra.monitoring.namespace }}
+  labels:
+    {{- include "llm-d-inference-sim-demo.labels" . | nindent 4 }}
+    {{- with .Values.dra.monitoring.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "llm-d-inference-sim-demo.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ .Values.dra.monitoring.path }}
+      interval: {{ .Values.dra.monitoring.interval }}
+      scrapeTimeout: {{ .Values.dra.monitoring.scrapeTimeout }}
+{{- end }}

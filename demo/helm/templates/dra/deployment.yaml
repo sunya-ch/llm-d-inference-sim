@@ -88,6 +88,7 @@ spec:
         - --kv-cache-size={{ .Values.dra.kvCache.size }}
         - --block-size={{ .Values.dra.kvCache.blockSize }}
         - --global-cache-hit-threshold={{ .Values.dra.kvCache.globalCacheHitThreshold }}
+        - --v=5
         {{- end }}
         env:
         {{- include "llm-d-inference-sim-demo.podEnvVars" . | nindent 8 }}

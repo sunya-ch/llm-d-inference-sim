@@ -56,11 +56,21 @@ dra:
   resourceClaimTemplate:
     name: "vllm-sim-with-dra-claim"
     deviceClassName: "vgpu.example.com"   # Provided by the DRA example driver (vgpu-profile branch)
-    memory: "20Gi"
-    compute: "40"
-
-# ----------------------------------------------------------------------------
-# PD-Disaggregation preset
+    memory: "16Gi"
+    compute: "10"
+  
+  # Monitoring configuration for ServiceMonitor
+  monitoring:
+    enabled: false
+    namespace: "observability"
+    path: "/metrics"
+    interval: "15s"
+    scrapeTimeout: "10s"
+    labels:
+      release: knative
+  
+  # ----------------------------------------------------------------------------
+  # PD-Disaggregation preset
 # ----------------------------------------------------------------------------
 pdDisaggregation:
   # Active scenario. Must match one of the keys under `scenarios` below.
