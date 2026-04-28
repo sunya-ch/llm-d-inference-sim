@@ -272,13 +272,16 @@ func (r *queueTheoryResourceCalculator) CalculateResourceConsumption(params *Res
 
 // estimateThreadOccupancy estimates GPU thread utilization
 func (r *queueTheoryResourceCalculator) estimateThreadOccupancy(effectiveBatch, prefillTokens float64, numGPU int) float64 {
-	// Prefill phase: Parallelizes across the entire effective prompt
-	prefillThreads := prefillTokens * float64(r.complexity.MinThreads)
-	// Decode phase: Parallelizes across every sequence in the batch
+	// Determine Total Parallelism Demand
+	// For LLMs, threads are typically assigned per hidden dimension.
+	// Prefill phase: Uses hiddenSize threads (processes tokens in parallel via matrix ops)
+	// Decode phase: Uses hiddenSize threads per sequence in the batch
+	prefillThreads := float64(r.complexity.MinThreads)
 	decodeThreads := effectiveBatch * float64(r.complexity.MinThreads)
 
-	// Total active threads
-	totalActiveThreads := prefillThreads + decodeThreads
+	// In a single vLLM iteration, the GPU handles both.
+	// Use max instead of sum since they may not run simultaneously
+	totalActiveThreads := math.Max(prefillThreads, decodeThreads)
 
 	// Compare against hardware capacity
 	occupancy := (totalActiveThreads / float64(r.gpuSpec.MaxThreads*numGPU)) * 100
