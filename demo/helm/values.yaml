@@ -36,11 +36,11 @@ dra:
   # Latency simulation (realistic values for an 8B model).
   latency:
     calculator: "per-token"
-    prefillOverhead: "20ms"
+    prefillOverhead: "16ms"
     prefillTimePerToken: "0.05ms"
     prefillTimeStdDev: "0.01ms"
-    interTokenLatency: "10ms"
-    timeFactorUnderLoad: "1.8"   # 80% slowdown at max load
+    interTokenLatency: "6ms"
+    timeFactorUnderLoad: "1.2"   # 20% slowdown at max load
 
   # KV cache simulation.
   kvCache:
@@ -56,7 +56,7 @@ dra:
   resourceClaimTemplate:
     name: "vllm-sim-with-dra-claim"
     deviceClassName: "vgpu.example.com"   # Provided by the DRA example driver (vgpu-profile branch)
-    memory: "16Gi"
+    memory: "20Gi"
     compute: "10"
   
   # Monitoring configuration for ServiceMonitor
