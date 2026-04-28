@@ -163,40 +163,40 @@ if [ -n "$(${CONTAINER_RUNTIME} images -q "${UDS_TOKENIZER_IMAGE}")" ]; then
   fi
 fi
 
-# ------------------------------------------------------------------------------
-# Development Environment
-# ------------------------------------------------------------------------------
+# # ------------------------------------------------------------------------------
+# # Development Environment
+# # ------------------------------------------------------------------------------
 
-kubectl kustomize deploy \
-	| envsubst '${MODEL_NAME} ${VLLM_SIMULATOR_IMAGE} ${UDS_TOKENIZER_IMAGE} ${HOST_PORT} ${HF_TOKEN}' \
-  | kubectl --context ${KUBE_CONTEXT} apply -f -
+# kubectl kustomize deploy \
+# 	| envsubst '${MODEL_NAME} ${VLLM_SIMULATOR_IMAGE} ${UDS_TOKENIZER_IMAGE} ${HOST_PORT} ${HF_TOKEN}' \
+#   | kubectl --context ${KUBE_CONTEXT} apply -f -
 
-# ------------------------------------------------------------------------------
-# Check & Verify
-# ------------------------------------------------------------------------------
+# # ------------------------------------------------------------------------------
+# # Check & Verify
+# # ------------------------------------------------------------------------------
 
-# Wait for all deployments to be ready
-kubectl --context ${KUBE_CONTEXT} -n default wait --for=condition=available --timeout=300s deployment --all
+# # Wait for all deployments to be ready
+# kubectl --context ${KUBE_CONTEXT} -n default wait --for=condition=available --timeout=300s deployment --all
 
-cat <<EOF
------------------------------------------
-Deployment completed!
+# cat <<EOF
+# -----------------------------------------
+# Deployment completed!
 
-* Kind Cluster Name: ${CLUSTER_NAME}
-* Kubectl Context: ${KUBE_CONTEXT}
+# * Kind Cluster Name: ${CLUSTER_NAME}
+# * Kubectl Context: ${KUBE_CONTEXT}
 
-Status:
+# Status:
 
-* The vllm simulator is running
-* The UDS tokenizer is running
+# * The vllm simulator is running
+# * The UDS tokenizer is running
 
-You can watch the Simulator logs with:
+# You can watch the Simulator logs with:
 
-  $ kubectl --context ${KUBE_CONTEXT} logs -f deployments/vllm-sim
+#   $ kubectl --context ${KUBE_CONTEXT} logs -f deployments/vllm-sim
 
-With that running in the background, you can make requests:
+# With that running in the background, you can make requests:
 
-  $ curl -s -w '\n' http://localhost:${HOST_PORT}/v1/completions -H 'Content-Type: application/json' -d '{"model":"${MODEL_NAME}","prompt":"hi","max_tokens":10,"temperature":0}' | jq
+#   $ curl -s -w '\n' http://localhost:${HOST_PORT}/v1/completions -H 'Content-Type: application/json' -d '{"model":"${MODEL_NAME}","prompt":"hi","max_tokens":10,"temperature":0}' | jq
 
------------------------------------------
-EOF
+# -----------------------------------------
+# EOF
