@@ -359,7 +359,7 @@ func (s *VllmSimulator) sendResponse(reqCtx requestContext, respCtx ResponseCont
 		common.WriteToChannel(reqCtx.responseChannel(), &ResponseInfo{RespCtx: respCtx},
 			s.Context.logger)
 	} else {
-		s.Context.simulateTTFT(respCtx)
+		s.Context.simulateTTFT(reqCtx, respCtx)
 
 		startDecode := time.Now()
 		if respIsEmpty(respCtx) {

@@ -191,7 +191,7 @@ func (s *SimContext) getDisplayedModelName(reqModel string) string {
 	return s.Config.ServedModelNames[0]
 }
 
-func (s *SimContext) simulateTTFT(respCtx ResponseContext) {
+func (s *SimContext) simulateTTFT(reqCtx requestContext, respCtx ResponseContext) {
 	startPrefill := time.Now()
 
 	// Get current thread utilization and cap from resource calculator
@@ -237,8 +237,10 @@ func (s *SimContext) simulateTTFT(respCtx ResponseContext) {
 	}
 	ttft := s.latencyCalculator.GetTimeToFirstToken(&params)
 	time.Sleep(ttft)
-	// report ttft in seconds
-	common.WriteToChannel(s.metrics.ttftChan, ttft.Seconds(), s.logger)
+	// Report TTFT including queue time (time from request arrival to first token)
+	// This matches industry standard where TTFT includes all time user experiences
+	ttftWithQueue := time.Since(reqCtx.startProcessingTime())
+	common.WriteToChannel(s.metrics.ttftChan, ttftWithQueue.Seconds(), s.logger)
 	common.WriteToChannel(s.metrics.reqPrefillTimeChan, time.Since(startPrefill).Seconds(), s.logger)
 }
 

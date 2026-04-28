@@ -131,7 +131,9 @@ var _ = Describe("GPU Resource Calculator", func() {
 
 			Expect(consumptions1).To(HaveLen(1))
 			Expect(consumptions5).To(HaveLen(1))
-			Expect(consumptions5[0].ActiveThreadPercentage).To(BeNumerically(">", consumptions1[0].ActiveThreadPercentage))
+			// With more concurrent requests, thread utilization should increase or stay the same
+			// (it may be capped by GPU limits)
+			Expect(consumptions5[0].ActiveThreadPercentage).To(BeNumerically(">=", consumptions1[0].ActiveThreadPercentage))
 		})
 
 		It("should distribute resources equally across multiple GPUs", func() {

@@ -17,8 +17,10 @@ limitations under the License.
 package llmdinferencesim
 
 import (
+	"os"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/llm-d/llm-d-inference-sim/pkg/common"
 )
 
@@ -52,16 +54,13 @@ type baseCalculator struct {
 	timeFactorUnderLoad     float64
 	maxNumSeqs              int
 	random                  *common.Random
+	gpuSpec                 *GPUSpecs
 }
 
 // returns inter token latency
 func (b *baseCalculator) GetInterTokenLatency(params *InterTokenParams) time.Duration {
-	loadFactor := b.getCurrLoadFactor(params.RunningReqs)
-
-	// Apply GPU saturation factor if thread utilization data is available
-	gpuSaturationFactor := b.getGPUSaturationFactor(params.ThreadUtilization, params.ThreadUtilizationCap)
-
-	latency := time.Duration(float64(b.interTokenLatency) * loadFactor * gpuSaturationFactor)
+	allocationImpact := b.CalculateResourceAllocationImpact(params.ThreadUtilization, params.ThreadUtilizationCap)
+	latency := time.Duration(float64(b.interTokenLatency) * b.getCurrLoadFactor(params.RunningReqs) * (1.0 + allocationImpact))
 	return b.random.RandomNormDuration(latency, b.interTokenLatencyStdDev)
 }
 
@@ -72,36 +71,40 @@ func (b *baseCalculator) getCurrLoadFactor(nRunningReqs int64) float64 {
 	return 1 + (b.timeFactorUnderLoad-1)*float64(nRunningReqs-1)/float64(b.maxNumSeqs-1)
 }
 
-// getGPUSaturationFactor calculates additional latency factor based on GPU utilization
-// When GPU is saturated (utilization at or above cap), requests experience additional delays
-func (b *baseCalculator) getGPUSaturationFactor(utilization, cap float64) float64 {
+func (b *baseCalculator) CalculateResourceAllocationImpact(utilization, cap float64) float64 {
+	// If no GPU specs provided, return 0.0 (no adjustment)
+	if b.gpuSpec == nil {
+		return 0.0
+	}
 	// If no utilization data provided, return 1.0 (no adjustment)
 	if cap <= 0 || utilization <= 0 {
-		return 1.0
+		return 0.0
 	}
 
-	// Calculate utilization ratio (how close we are to the cap)
-	utilizationRatio := utilization / cap
+	ratio := utilization / cap
 
-	// If under 80% of cap, no additional delay
-	if utilizationRatio < 0.8 {
-		return 1.0
+	if ratio < 0.0 {
+		ratio = 0.0
+	}
+	if ratio > 1.0 {
+		ratio = 1.0
+	}
+	// 1. Under-provisioned (Low Density): Apply Speedup
+	// We call this 'Overprovisioning the work' to get a speedup
+	if ratio < 0.5 {
+		// As the ratio gets smaller, the potential 'Speedup' bonus is higher
+		// (1.0 - ratio) represents the 'empty space' we can fill
+		return -(1.0 - ratio) * b.gpuSpec.OverprovisionSpeedUp
 	}
 
-	// Between 80-100%: gradual increase in latency (up to 1.5x at cap)
-	if utilizationRatio < 1.0 {
-		// Linear increase from 1.0 to 1.5 as we go from 80% to 100%
-		return 1.0 + (utilizationRatio-0.8)*2.5 // (1.0-0.8)*2.5 = 0.5, so max is 1.5
+	// 2. Over-provisioned (High Density): Apply Contention
+	// We call this 'Under-provisioning the hardware' relative to the load
+	if ratio > 0.8 {
+		// As the ratio approaches 1.0 (or exceeds it via queuing),
+		// the contention penalty scales up.
+		return (ratio - 0.8) * b.gpuSpec.UnderprovisionContentionImpact
 	}
-
-	// At or above cap: significant performance degradation
-	// Exponential increase: 1.5x at 100%, 2.0x at 110%, 3.0x at 120%, etc.
-	if utilizationRatio >= 1.0 {
-		excessRatio := utilizationRatio - 1.0
-		return 1.5 + excessRatio*5.0 // Steep increase for over-utilization
-	}
-
-	return 1.0
+	return 0.0
 }
 
 // Default latency calculator. Decides whether to use per token or
@@ -121,6 +124,16 @@ type defaultCalculator struct {
 }
 
 func newDefaultCalculator(config *common.Configuration, random *common.Random) *defaultCalculator {
+	// Get GPU name from environment or use default
+	gpuName := os.Getenv("GPU_MODEL_NAME_0")
+	if gpuName == "" {
+		gpuName = "NVIDIA-A100-SXM4-80GB" // default
+	}
+	// Get GPU specs
+	gpuFound, gpuSpec := getGPUSpecs(gpuName, logr.Logger{})
+	if !gpuFound {
+		_, gpuSpec = getGPUSpecs("NVIDIA-A100-SXM4-80GB", logr.Logger{})
+	}
 	return &defaultCalculator{
 		baseCalculator: baseCalculator{
 			interTokenLatency:       config.InterTokenLatency.ToDuration(),
@@ -128,6 +141,7 @@ func newDefaultCalculator(config *common.Configuration, random *common.Random) *
 			timeFactorUnderLoad:     config.TimeFactorUnderLoad,
 			maxNumSeqs:              config.MaxNumSeqs,
 			random:                  random,
+			gpuSpec:                 gpuSpec,
 		},
 		timeToFirstToken:             config.TimeToFirstToken.ToDuration(),
 		timeToFirstTokenStdDev:       config.TimeToFirstTokenStdDev.ToDuration(),
@@ -143,29 +157,26 @@ func newDefaultCalculator(config *common.Configuration, random *common.Random) *
 
 // returns time to first token
 func (d *defaultCalculator) GetTimeToFirstToken(params *TTFTParams) time.Duration {
-	loadFactor := d.getCurrLoadFactor(params.RunningReqs)
-	gpuSaturationFactor := d.getGPUSaturationFactor(params.ThreadUtilization, params.ThreadUtilizationCap)
-
 	if params.DoRemotePrefill {
 		if d.kVCacheTransferLatency == 0 && d.kVCacheTransferLatencyStdDev == 0 {
 			// is disaggregated PD and ttft is calculated using number of prompt tokens
-			kvCacheTransT := time.Duration(float64(d.kVCacheTransferTimePerToken) * float64(params.PromptTokens) * gpuSaturationFactor)
+			kvCacheTransT := d.kVCacheTransferTimePerToken * time.Duration(params.PromptTokens)
 			return d.random.RandomNormDuration(kvCacheTransT, d.kVCacheTransferTimeStdDev)
 		}
 		// is disaggregated PD and *not* using number of prompt tokens
-		kvCacheLatency := time.Duration(float64(d.kVCacheTransferLatency) * gpuSaturationFactor)
-		return d.random.RandomNormDuration(kvCacheLatency, d.kVCacheTransferLatencyStdDev)
+		return d.random.RandomNormDuration(d.kVCacheTransferLatency, d.kVCacheTransferLatencyStdDev)
 	}
 	if d.timeToFirstToken == 0 && d.timeToFirstTokenStdDev == 0 {
 		// is aggregated PD and ttft is calculated using number of prompt tokens that are not in kv cache
-		prefillOverhead := time.Duration(float64(d.prefillOverhead) * loadFactor * gpuSaturationFactor)
-		prefillTimePerToken := time.Duration(float64(d.prefillTimePerToken) * loadFactor * gpuSaturationFactor)
+		prefillOverhead := time.Duration(float64(d.prefillOverhead) * d.getCurrLoadFactor(params.RunningReqs))
+		allocationImpact := d.CalculateResourceAllocationImpact(params.ThreadUtilization, params.ThreadUtilizationCap)
+		prefillTimePerToken := time.Duration(float64(d.prefillTimePerToken) * d.getCurrLoadFactor(params.RunningReqs) * (1.0 + allocationImpact))
 		prefillTime := prefillOverhead + time.Duration(params.PromptTokens-params.CachedPromptTokens)*prefillTimePerToken
 		return d.random.RandomNormDuration(prefillTime, d.prefillTimeStdDev)
 	}
 
 	// is aggregated PD and *not* using number of prompt tokens
-	ttft := time.Duration(float64(d.timeToFirstToken) * loadFactor * gpuSaturationFactor)
+	ttft := time.Duration(float64(d.timeToFirstToken) * d.getCurrLoadFactor(params.RunningReqs))
 	return d.random.RandomNormDuration(ttft, d.timeToFirstTokenStdDev)
 }
 
@@ -197,16 +208,12 @@ func newConstantCalculator(config *common.Configuration, random *common.Random) 
 
 // returns time to first token
 func (c *constantCalculator) GetTimeToFirstToken(params *TTFTParams) time.Duration {
-	loadFactor := c.getCurrLoadFactor(params.RunningReqs)
-	gpuSaturationFactor := c.getGPUSaturationFactor(params.ThreadUtilization, params.ThreadUtilizationCap)
-
 	if params.DoRemotePrefill {
 		// is disaggregated PD and *not* using number of prompt tokens
-		kvCacheLatency := time.Duration(float64(c.kVCacheTransferLatency) * gpuSaturationFactor)
-		return c.random.RandomNormDuration(kvCacheLatency, c.kVCacheTransferLatencyStdDev)
+		return c.random.RandomNormDuration(c.kVCacheTransferLatency, c.kVCacheTransferLatencyStdDev)
 	}
 	// is aggregated PD and *not* using number of prompt tokens
-	ttft := time.Duration(float64(c.timeToFirstToken) * loadFactor * gpuSaturationFactor)
+	ttft := time.Duration(float64(c.timeToFirstToken) * c.getCurrLoadFactor(params.RunningReqs))
 	return c.random.RandomNormDuration(ttft, c.timeToFirstTokenStdDev)
 }
 
@@ -239,17 +246,14 @@ func newPerTokenCalculator(config *common.Configuration, random *common.Random) 
 
 // returns time to first token
 func (p *perTokenCalculator) GetTimeToFirstToken(params *TTFTParams) time.Duration {
-	loadFactor := p.getCurrLoadFactor(params.RunningReqs)
-	gpuSaturationFactor := p.getGPUSaturationFactor(params.ThreadUtilization, params.ThreadUtilizationCap)
-
 	if params.DoRemotePrefill {
 		// is disaggregated PD and ttft is calculated using number of prompt tokens
-		kvCacheTransT := time.Duration(float64(p.kVCacheTransferTimePerToken) * float64(params.PromptTokens) * gpuSaturationFactor)
+		kvCacheTransT := p.kVCacheTransferTimePerToken * time.Duration(params.PromptTokens)
 		return p.random.RandomNormDuration(kvCacheTransT, p.kVCacheTransferTimeStdDev)
 	}
 	// is aggregated PD and ttft is calculated using number of prompt tokens that are not in kv cache
-	prefillOverhead := time.Duration(float64(p.prefillOverhead) * loadFactor * gpuSaturationFactor)
-	prefillTimePerToken := time.Duration(float64(p.prefillTimePerToken) * loadFactor * gpuSaturationFactor)
+	prefillOverhead := time.Duration(float64(p.prefillOverhead) * p.getCurrLoadFactor(params.RunningReqs))
+	prefillTimePerToken := time.Duration(float64(p.prefillTimePerToken) * p.getCurrLoadFactor(params.RunningReqs))
 	prefillTime := prefillOverhead + time.Duration(params.PromptTokens-params.CachedPromptTokens)*prefillTimePerToken
 	return p.random.RandomNormDuration(prefillTime, p.prefillTimeStdDev)
 }

@@ -25,6 +25,7 @@ import (
 
 	"github.com/llm-d/llm-d-inference-sim/pkg/common"
 	openaiserverapi "github.com/llm-d/llm-d-inference-sim/pkg/openai-server-api"
+	"github.com/llm-d/llm-d-inference-sim/pkg/tokenizer"
 	. "github.com/onsi/ginkgo/v2"
 	"k8s.io/klog/v2"
 
@@ -227,6 +228,10 @@ var _ = Describe("CustomDataset", Ordered, func() {
 	})
 
 	It("should return correct prompt hash in bytes", func() {
+		// Skip this test if using simulated tokenizer (hash will be different)
+		if _, ok := tokenizerMngr.RealTokenizer().(*tokenizer.SimpleTokenizer); ok {
+			Skip("Skipping test - using simulated tokenizer instead of real tokenizer")
+		}
 		req := &openaiserverapi.TextCompletionRequest{}
 		req.SetTokenizedPrompt(&validDB[0].tokenizedInput)
 		dataset := &CustomDataset{}
@@ -236,6 +241,10 @@ var _ = Describe("CustomDataset", Ordered, func() {
 	})
 
 	It("should return correct prompt hash in hex", func() {
+		// Skip this test if using simulated tokenizer (hash will be different)
+		if _, ok := tokenizerMngr.RealTokenizer().(*tokenizer.SimpleTokenizer); ok {
+			Skip("Skipping test - using simulated tokenizer instead of real tokenizer")
+		}
 		tokens, strTokens, err := tokenizerMngr.RealTokenizer().RenderText(validDB[0].input)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tokens).To(Equal(validDB[0].tokenizedInput.Tokens))
@@ -305,6 +314,10 @@ var _ = Describe("CustomDataset", Ordered, func() {
 		)
 
 		It("should return tokens for existing prompt", func() {
+			// Skip this test if using simulated tokenizer (tokens will be different)
+			if _, ok := tokenizerMngr.RealTokenizer().(*tokenizer.SimpleTokenizer); ok {
+				Skip("Skipping test - using simulated tokenizer instead of real tokenizer")
+			}
 			req := &openaiserverapi.TextCompletionRequest{}
 			req.SetTokenizedPrompt(&validDB[1].tokenizedInput)
 
@@ -315,6 +328,10 @@ var _ = Describe("CustomDataset", Ordered, func() {
 		})
 
 		It("should return at most 2 tokens for existing prompt", func() {
+			// Skip this test if using simulated tokenizer (tokens will be different)
+			if _, ok := tokenizerMngr.RealTokenizer().(*tokenizer.SimpleTokenizer); ok {
+				Skip("Skipping test - using simulated tokenizer instead of real tokenizer")
+			}
 			req := &openaiserverapi.TextCompletionRequest{
 				MaxTokens: &smallMaxTokens,
 			}
@@ -325,6 +342,10 @@ var _ = Describe("CustomDataset", Ordered, func() {
 		})
 
 		It("should successfully init dataset with in-memory option", func() {
+			// Skip this test if using simulated tokenizer (tokens will be different)
+			if _, ok := tokenizerMngr.RealTokenizer().(*tokenizer.SimpleTokenizer); ok {
+				Skip("Skipping test - using simulated tokenizer instead of real tokenizer")
+			}
 			req := &openaiserverapi.TextCompletionRequest{
 				Prompt: validDB[1].input,
 			}
@@ -337,6 +358,10 @@ var _ = Describe("CustomDataset", Ordered, func() {
 		})
 
 		It("should work correctly for chat request with multiple messages", func() {
+			// Skip this test if using simulated tokenizer (tokens will be different)
+			if _, ok := tokenizerMngr.RealTokenizer().(*tokenizer.SimpleTokenizer); ok {
+				Skip("Skipping test - using simulated tokenizer instead of real tokenizer")
+			}
 			req := openaiserverapi.ChatCompletionRequest{MaxTokens: &maxTokens}
 			req.Messages = validDB[2].messages
 			req.SetTokenizedPrompt(&validDB[2].tokenizedInput)
