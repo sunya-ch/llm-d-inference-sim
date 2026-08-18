@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/pflag"
 	"k8s.io/klog/v2"
@@ -152,6 +153,7 @@ func ParseCommandParamsAndLoadConfig() (*Configuration, error) {
 	f.BoolVar(&config.EnableKVCache, "enable-kvcache", config.EnableKVCache, "Defines if KV cache feature is enabled")
 	f.IntVar(&config.KVCacheSize, "kv-cache-size", config.KVCacheSize, "Maximum number of token blocks in kv cache")
 	f.StringVar(&config.GPUMemoryEnvVar, "gpu-memory-env-var", config.GPUMemoryEnvVar, "Environment variable name carrying GPU memory for this partition (e.g. GPU_DEVICE_0_MEMORY); when set and --kv-cache-size is not provided, KV cache size is derived from it")
+	f.StringVar(&config.GPUComputeEnvVar, "gpu-compute-env-var", config.GPUComputeEnvVar, "Environment variable name carrying GPU SM compute percentage for this partition (e.g. GPU_DEVICE_0_COMPUTE, values 1–100); when set, sm_factor=100/compute% is applied statically to all GPU-bound latency parameters (prefill-overhead, prefill-time-per-token, time-to-first-token, inter-token-latency)")
 	f.Float64Var(&config.ModelWeightsSizeGB, "model-weights-size-gb", config.ModelWeightsSizeGB, "Model weights size in GiB; required together with num-hidden-layers, num-kv-heads, and head-dim to derive kv-cache-size from GPU memory")
 	f.IntVar(&config.NumHiddenLayers, "num-hidden-layers", config.NumHiddenLayers, "Number of transformer layers (from model config.json num_hidden_layers); required for kv-cache-size derivation")
 	f.IntVar(&config.NumKVHeads, "num-kv-heads", config.NumKVHeads, "Number of KV attention heads per layer (from model config.json num_key_value_heads); required for kv-cache-size derivation")
@@ -302,6 +304,17 @@ func ParseCommandParamsAndLoadConfig() (*Configuration, error) {
 		if blocks, ok := deriveKVCacheBlocks(config); ok {
 			config.KVCacheSize = blocks
 		}
+	}
+
+	// Apply SM compute factor to GPU-bound latency parameters. The factor is
+	// static (applied once at startup) and is independent of time-factor-under-load
+	// (which is a dynamic per-request contention multiplier). KV-cache transfer
+	// latencies are not scaled — they are network-bound, not GPU-bound.
+	if smFactor, ok := deriveSMFactor(config); ok {
+		config.TimeToFirstToken = time.Duration(float64(config.TimeToFirstToken) * smFactor)
+		config.PrefillOverhead = time.Duration(float64(config.PrefillOverhead) * smFactor)
+		config.PrefillTimePerToken = time.Duration(float64(config.PrefillTimePerToken) * smFactor)
+		config.InterTokenLatency = time.Duration(float64(config.InterTokenLatency) * smFactor)
 	}
 
 	if err := config.validate(); err != nil {

@@ -18,6 +18,7 @@ package common
 
 import (
 	"os"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -132,4 +133,86 @@ var _ = Describe("deriveKVCacheBlocks", func() {
 		Entry("weights exceed available memory",
 			"20Gi", func(c *Configuration) { c.ModelWeightsSizeGB = 20 }, false, 0),
 	)
+})
+
+var _ = Describe("deriveSMFactor", func() {
+	DescribeTable("returns the correct SM factor",
+		func(envValue string, expectOK bool, expectFactor float64) {
+			setEnv("TEST_GPU_COMPUTE", envValue)
+			c := &Configuration{GPUComputeEnvVar: "TEST_GPU_COMPUTE"}
+			factor, ok := deriveSMFactor(c)
+			Expect(ok).To(Equal(expectOK))
+			if expectOK {
+				Expect(factor).To(BeNumerically("~", expectFactor, 1e-9))
+			}
+		},
+		// --- good inputs ---
+		Entry("40% → factor 2.5", "40", true, 2.5),
+		Entry("50% → factor 2.0", "50", true, 2.0),
+		Entry("100% → factor 1.0 (full GPU, no scaling)", "100", true, 1.0),
+		Entry("1% → factor 100.0 (minimum allocation)", "1", true, 100.0),
+		Entry("leading/trailing whitespace is trimmed", " 50 ", true, 2.0),
+
+		// --- env var problems ---
+		Entry("env var not set", "", false, 0.0),
+		Entry("value is not an integer", "forty", false, 0.0),
+		Entry("fractional value is not accepted (integer contract)", "1.5", false, 0.0),
+		Entry("value is zero (below range)", "0", false, 0.0),
+		Entry("value is negative", "-10", false, 0.0),
+		Entry("value exceeds 100", "101", false, 0.0),
+	)
+})
+
+var _ = Describe("SM factor application in parser", func() {
+	const computeEnvVar = "TEST_SM_COMPUTE"
+
+	BeforeEach(func() {
+		setEnv(computeEnvVar, "50") // sm_factor = 2.0
+	})
+
+	It("scales per-token calculator params (prefill-overhead, prefill-time-per-token, inter-token-latency) even when set via CLI", func() {
+		cfg, err := createSimConfig([]string{
+			"cmd",
+			"--model", "test-model",
+			"--gpu-compute-env-var", computeEnvVar,
+			"--latency-calculator", "per-token",
+			"--prefill-overhead", "80ms",
+			"--prefill-time-per-token", "500us",
+			"--inter-token-latency", "25ms",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		// SM factor is always applied, regardless of whether the flag was explicitly set.
+		Expect(cfg.PrefillOverhead).To(Equal(160 * time.Millisecond))      // 80ms × 2.0
+		Expect(cfg.PrefillTimePerToken).To(Equal(1000 * time.Microsecond)) // 500µs × 2.0
+		Expect(cfg.InterTokenLatency).To(Equal(50 * time.Millisecond))     // 25ms × 2.0
+	})
+
+	It("scales per-token calculator params when NOT set via CLI (SM factor applied)", func() {
+		cfg, err := createSimConfig([]string{
+			"cmd",
+			"--model", "test-model",
+			"--gpu-compute-env-var", computeEnvVar,
+			"--latency-calculator", "per-token",
+			// prefill-overhead, prefill-time-per-token, inter-token-latency all default to 0
+		})
+		Expect(err).NotTo(HaveOccurred())
+		// Defaults are 0, so 0 × 2.0 = 0 — just verify no error and factor was attempted.
+		Expect(cfg.PrefillOverhead).To(Equal(time.Duration(0)))
+		Expect(cfg.PrefillTimePerToken).To(Equal(time.Duration(0)))
+		Expect(cfg.InterTokenLatency).To(Equal(time.Duration(0)))
+	})
+
+	It("scales time-to-first-token even when explicitly set via CLI", func() {
+		// SM factor is always applied to all GPU-bound latency parameters.
+		cfg, err := createSimConfig([]string{
+			"cmd",
+			"--model", "test-model",
+			"--gpu-compute-env-var", computeEnvVar,
+			"--time-to-first-token", "100ms",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.TimeToFirstToken).To(Equal(200 * time.Millisecond)) // 100ms × 2.0
+		Expect(cfg.PrefillOverhead).To(Equal(time.Duration(0)))        // 0 × 2.0 = 0
+		Expect(cfg.InterTokenLatency).To(Equal(time.Duration(0)))      // 0 × 2.0 = 0
+	})
 })

@@ -233,6 +233,13 @@ type Configuration struct {
 	// and --kv-cache-size is not explicitly configured, KVCacheSize is derived from it
 	// using vLLM's kv_cache_blocks formula. Defaults to "GPU_DEVICE_0_MEMORY".
 	GPUMemoryEnvVar string `yaml:"gpu-memory-env-var" json:"gpu-memory-env-var"`
+	// GPUComputeEnvVar is the name of the environment variable that carries the SM compute
+	// percentage for this partition (e.g. "GPU_DEVICE_0_COMPUTE", values 1–100). When the
+	// variable is set, a static SM factor (100/compute%) is applied at startup to all
+	// GPU-bound latency parameters (prefill-overhead, prefill-time-per-token,
+	// time-to-first-token, inter-token-latency). KV-cache transfer latencies are not
+	// affected because they are network-bound. Defaults to "GPU_DEVICE_0_COMPUTE".
+	GPUComputeEnvVar string `yaml:"gpu-compute-env-var" json:"gpu-compute-env-var"`
 	// ModelWeightsSizeGB is the size of the model weights in GiB. Required for kv_cache_blocks
 	// derivation when GPU_DEVICE_<N>_MEMORY is used.
 	ModelWeightsSizeGB float64 `yaml:"model-weights-size-gb" json:"model-weights-size-gb"`
@@ -409,6 +416,7 @@ func newConfig() *Configuration {
 		ToolCallExtraCallProbability:              45,
 		KVCacheSize:                               1024,
 		GPUMemoryEnvVar:                           "GPU_DEVICE_0_MEMORY",
+		GPUComputeEnvVar:                          "GPU_DEVICE_0_COMPUTE",
 		GPUMemoryUtilization:                      0.9,
 		TokenBlockSize:                            16,
 		ZMQEndpoint:                               "tcp://127.0.0.1:5557",
@@ -900,5 +908,39 @@ func (c *Configuration) Show(logger logr.Logger) error {
 		return fmt.Errorf("failed to marshal configuration to JSON: %w", err)
 	}
 	logger.V(logging.INFO).Info("Configuration:", "", string(cfgJSON))
+
+	if smFactor, ok := deriveSMFactor(c); ok {
+		logger.V(logging.INFO).Info("SM compute factor applied to GPU-bound latency parameters",
+			"smFactor", smFactor,
+			"time-to-first-token", c.TimeToFirstToken,
+			"prefill-overhead", c.PrefillOverhead,
+			"prefill-time-per-token", c.PrefillTimePerToken,
+			"inter-token-latency", c.InterTokenLatency)
+	} else {
+		logger.V(logging.INFO).Info("SM compute factor not applied",
+			"gpu-compute-env-var", c.GPUComputeEnvVar)
+	}
+
+	res, ok := deriveKVCacheBlocksWithResult(c)
+	if ok {
+		logger.V(logging.INFO).Info("KV cache auto-derivation succeeded",
+			"envVar", c.GPUMemoryEnvVar,
+			"gpuBytes", res.gpuBytes,
+			"gpu-memory-utilization", c.GPUMemoryUtilization,
+			"model-weights-size-gb", c.ModelWeightsSizeGB,
+			"num-hidden-layers", c.NumHiddenLayers,
+			"num-kv-heads", c.NumKVHeads,
+			"head-dim", c.HeadDim,
+			"bpe", res.bpe,
+			"block-size", c.TokenBlockSize,
+			"bytesPerBlock", res.bytesPerBlock,
+			"availableBytes", res.availableBytes,
+			"kv-cache-blocks", res.blocks)
+	} else {
+		logger.V(logging.INFO).Info("KV cache auto-derivation skipped",
+			"reason", res.skipReason,
+			"envVar", c.GPUMemoryEnvVar)
+	}
+
 	return nil
 }

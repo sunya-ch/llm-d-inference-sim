@@ -22,6 +22,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,6 +95,19 @@ func lookupHFModelConfig(model string) (*hfModelConfig, error) {
 	return &cfg, nil
 }
 
+// kvCacheDerivationResult holds the outcome and all computed intermediates from
+// deriveKVCacheBlocks so that callers (e.g. Show) can log them without re-running
+// the derivation.
+type kvCacheDerivationResult struct {
+	skipped       bool
+	skipReason    string
+	blocks        int
+	gpuBytes      int64
+	bpe           int
+	bytesPerBlock int
+	availableBytes float64
+}
+
 // deriveKVCacheBlocks computes the number of KV cache blocks that fit in available
 // GPU memory, mirroring vLLM's startup formula:
 //
@@ -103,43 +117,77 @@ func lookupHFModelConfig(model string) (*hfModelConfig, error) {
 //
 // Returns (0, false) if any input is non-positive or available memory ≤ 0.
 func deriveKVCacheBlocks(c *Configuration) (int, bool) {
+	res, _ := deriveKVCacheBlocksWithResult(c)
+	return res.blocks, !res.skipped
+}
+
+// deriveKVCacheBlocksWithResult is like deriveKVCacheBlocks but also returns a
+// kvCacheDerivationResult populated with intermediate values for logging.
+func deriveKVCacheBlocksWithResult(c *Configuration) (kvCacheDerivationResult, bool) {
+	skip := func(reason string) (kvCacheDerivationResult, bool) {
+		return kvCacheDerivationResult{skipped: true, skipReason: reason}, false
+	}
+
 	// Require the GPU memory env var to be set.
 	raw := os.Getenv(c.GPUMemoryEnvVar)
 	if raw == "" {
-		return 0, false
+		return skip("GPU memory env var not set")
 	}
 
 	// Parse Kubernetes quantity string (e.g. "20Gi", "21474836480").
 	q, err := resource.ParseQuantity(raw)
 	if err != nil {
-		return 0, false
+		return skip("failed to parse GPU memory value")
 	}
 	gpuBytes, ok := q.AsInt64()
 	if !ok || gpuBytes <= 0 {
-		return 0, false
+		return skip("GPU memory value out of range")
 	}
 
 	headDim := c.HeadDim
 
 	// All four arch params must be provided.
 	if c.NumHiddenLayers <= 0 || c.NumKVHeads <= 0 || headDim <= 0 || c.ModelWeightsSizeGB <= 0 {
-		return 0, false
+		return skip("missing architecture parameters")
 	}
 
 	bpe := kvCacheBytesPerElement(c.KVCacheDtype)
 	bytesPerBlock := 2 * c.NumHiddenLayers * c.NumKVHeads * headDim * bpe * c.TokenBlockSize
 	if bytesPerBlock <= 0 {
-		return 0, false
+		return skip("computed bytes-per-block is zero")
 	}
 
 	available := float64(gpuBytes)*c.GPUMemoryUtilization - c.ModelWeightsSizeGB*float64(1<<30)
 	if available <= 0 {
-		return 0, false
+		return skip("no memory available after subtracting model weights")
 	}
 
 	blocks := int(math.Floor(available / float64(bytesPerBlock)))
 	if blocks <= 0 {
+		return skip("computed block count is zero")
+	}
+
+	return kvCacheDerivationResult{
+		blocks:        blocks,
+		gpuBytes:      gpuBytes,
+		bpe:           bpe,
+		bytesPerBlock: bytesPerBlock,
+		availableBytes: available,
+	}, true
+}
+
+// deriveSMFactor reads the GPU compute percentage from c.GPUComputeEnvVar and
+// returns (100/compute, true) as the static SM latency multiplier to apply to
+// all GPU-bound latency parameters at startup.
+// Returns (0, false) if the variable is unset, unparseable, or out of range [1, 100].
+func deriveSMFactor(c *Configuration) (float64, bool) {
+	raw := os.Getenv(c.GPUComputeEnvVar)
+	if raw == "" {
 		return 0, false
 	}
-	return blocks, true
+	p, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || p < 1 || p > 100 {
+		return 0, false
+	}
+	return 100.0 / float64(p), true
 }
