@@ -151,6 +151,11 @@ func ParseCommandParamsAndLoadConfig() (*Configuration, error) {
 
 	f.BoolVar(&config.EnableKVCache, "enable-kvcache", config.EnableKVCache, "Defines if KV cache feature is enabled")
 	f.IntVar(&config.KVCacheSize, "kv-cache-size", config.KVCacheSize, "Maximum number of token blocks in kv cache")
+	f.StringVar(&config.GPUMemoryEnvVar, "gpu-memory-env-var", config.GPUMemoryEnvVar, "Environment variable name carrying GPU memory for this partition (e.g. GPU_DEVICE_0_MEMORY); when set and --kv-cache-size is not provided, KV cache size is derived from it")
+	f.Float64Var(&config.ModelWeightsSizeGB, "model-weights-size-gb", config.ModelWeightsSizeGB, "Model weights size in GiB; required together with num-hidden-layers, num-kv-heads, and head-dim to derive kv-cache-size from GPU memory")
+	f.IntVar(&config.NumHiddenLayers, "num-hidden-layers", config.NumHiddenLayers, "Number of transformer layers (from model config.json num_hidden_layers); required for kv-cache-size derivation")
+	f.IntVar(&config.NumKVHeads, "num-kv-heads", config.NumKVHeads, "Number of KV attention heads per layer (from model config.json num_key_value_heads); required for kv-cache-size derivation")
+	f.IntVar(&config.HeadDim, "head-dim", config.HeadDim, "Dimension of each KV attention head (from model config.json head_dim or hidden_size/num_attention_heads); required for kv-cache-size derivation")
 	f.Float64Var(&config.GPUMemoryUtilization, "gpu-memory-utilization", config.GPUMemoryUtilization, "Fraction of GPU memory to reserve for the KV cache pool (0.0–1.0); reported in vllm:cache_config_info")
 	f.StringVar(&config.KVCacheDtype, "kv-cache-dtype", config.KVCacheDtype, "Data type for KV cache entries (float16, bfloat16, float8); empty means auto, reported in vllm:cache_config_info")
 	f.Float64Var(&config.GlobalCacheHitThreshold, "global-cache-hit-threshold", 0, "Default cache hit threshold [0, 1] for all requests. If a request specifies cache_hit_threshold, it takes precedence")
@@ -288,6 +293,14 @@ func ParseCommandParamsAndLoadConfig() (*Configuration, error) {
 	if !f.Changed("hash-seed") {
 		if v := os.Getenv(PythonHashSeedEnv); v != "" {
 			config.HashSeed = v
+		}
+	}
+
+	// Derive kv-cache-size from GPU memory env var when the user has not set it explicitly
+	// and all required arch params are provided.
+	if !f.Changed("kv-cache-size") {
+		if blocks, ok := deriveKVCacheBlocks(config); ok {
+			config.KVCacheSize = blocks
 		}
 	}
 

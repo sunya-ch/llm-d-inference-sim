@@ -1,0 +1,145 @@
+/*
+Copyright 2025 The llm-d-inference-sim Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package common
+
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"k8s.io/apimachinery/pkg/api/resource"
+)
+
+// kvCacheBytesPerElement returns the number of bytes for one KV cache element.
+// Unknown or empty dtype falls back to float16 (2 bytes).
+func kvCacheBytesPerElement(dtype string) int {
+	switch strings.ToLower(dtype) {
+	case "float8", "fp8":
+		return 1
+	default: // float16, bfloat16, auto, empty — all 2 bytes
+		return 2
+	}
+}
+
+const hfTokenEnv = "HF_TOKEN"
+
+var hfConfigHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+type hfModelConfig struct {
+	NumHiddenLayers   int `json:"num_hidden_layers"`
+	NumKVHeads        int `json:"num_key_value_heads"`
+	HeadDim           int `json:"head_dim"`
+	HiddenSize        int `json:"hidden_size"`
+	NumAttentionHeads int `json:"num_attention_heads"`
+}
+
+func derivedHeadDim(headDim, hiddenSize, numAttentionHeads int) int {
+	if headDim > 0 {
+		return headDim
+	}
+	if hiddenSize <= 0 || numAttentionHeads <= 0 || hiddenSize%numAttentionHeads != 0 {
+		return 0
+	}
+	return hiddenSize / numAttentionHeads
+}
+
+func lookupHFModelConfig(model string) (*hfModelConfig, error) {
+	if model == "" {
+		return nil, fmt.Errorf("model is empty")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "https://huggingface.co/"+model+"/resolve/main/config.json", nil)
+	if err != nil {
+		return nil, err
+	}
+	if token := os.Getenv(hfTokenEnv); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := hfConfigHTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("huggingface config request failed with status %d", resp.StatusCode)
+	}
+
+	var cfg hfModelConfig
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		return nil, err
+	}
+	cfg.HeadDim = derivedHeadDim(cfg.HeadDim, cfg.HiddenSize, cfg.NumAttentionHeads)
+	if cfg.NumHiddenLayers <= 0 || cfg.NumKVHeads <= 0 || cfg.HeadDim <= 0 {
+		return nil, fmt.Errorf("huggingface config missing required fields")
+	}
+	return &cfg, nil
+}
+
+// deriveKVCacheBlocks computes the number of KV cache blocks that fit in available
+// GPU memory, mirroring vLLM's startup formula:
+//
+//	available  = gpuMemoryBytes × gpuMemUtilization − modelWeightsBytes
+//	bytesPerBlock = 2 × numLayers × numKVHeads × headDim × bytesPerElem × blockSize
+//	blocks     = floor(available / bytesPerBlock)
+//
+// Returns (0, false) if any input is non-positive or available memory ≤ 0.
+func deriveKVCacheBlocks(c *Configuration) (int, bool) {
+	// Require the GPU memory env var to be set.
+	raw := os.Getenv(c.GPUMemoryEnvVar)
+	if raw == "" {
+		return 0, false
+	}
+
+	// Parse Kubernetes quantity string (e.g. "20Gi", "21474836480").
+	q, err := resource.ParseQuantity(raw)
+	if err != nil {
+		return 0, false
+	}
+	gpuBytes, ok := q.AsInt64()
+	if !ok || gpuBytes <= 0 {
+		return 0, false
+	}
+
+	headDim := c.HeadDim
+
+	// All four arch params must be provided.
+	if c.NumHiddenLayers <= 0 || c.NumKVHeads <= 0 || headDim <= 0 || c.ModelWeightsSizeGB <= 0 {
+		return 0, false
+	}
+
+	bpe := kvCacheBytesPerElement(c.KVCacheDtype)
+	bytesPerBlock := 2 * c.NumHiddenLayers * c.NumKVHeads * headDim * bpe * c.TokenBlockSize
+	if bytesPerBlock <= 0 {
+		return 0, false
+	}
+
+	available := float64(gpuBytes)*c.GPUMemoryUtilization - c.ModelWeightsSizeGB*float64(1<<30)
+	if available <= 0 {
+		return 0, false
+	}
+
+	blocks := int(math.Floor(available / float64(bytesPerBlock)))
+	if blocks <= 0 {
+		return 0, false
+	}
+	return blocks, true
+}

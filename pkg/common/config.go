@@ -218,12 +218,30 @@ type Configuration struct {
 
 	// EnableKVCache defines if kv cache feature will be enabled
 	EnableKVCache bool `yaml:"enable-kvcache" json:"enable-kvcache"`
-	//  KVCacheSize is the maximum number of token blocks in kv cache, the default value is 1024
+	// KVCacheSize is the maximum number of token blocks in kv cache, the default value is 1024.
+	// When GPUMemoryEnvVar points to a set environment variable and --kv-cache-size is not
+	// explicitly passed on the command line, this value is derived from GPU memory using
+	// vLLM's kv_cache_blocks formula. All four arch params (NumHiddenLayers, NumKVHeads,
+	// HeadDim, ModelWeightsSizeGB) must be set for the derivation to proceed.
 	KVCacheSize int `yaml:"kv-cache-size" json:"kv-cache-size"`
 	// GPUMemoryUtilization is the fraction of GPU memory reserved for the KV cache pool,
 	// mirroring vLLM's --gpu-memory-utilization flag. Default is 0.9.
 	// Exposed as the gpu_memory_utilization label on vllm:cache_config_info.
 	GPUMemoryUtilization float64 `yaml:"gpu-memory-utilization" json:"gpu-memory-utilization"`
+	// GPUMemoryEnvVar is the name of the environment variable that carries the GPU memory
+	// quantity for this partition (e.g. "GPU_DEVICE_0_MEMORY"). When the variable is set
+	// and --kv-cache-size is not explicitly configured, KVCacheSize is derived from it
+	// using vLLM's kv_cache_blocks formula. Defaults to "GPU_DEVICE_0_MEMORY".
+	GPUMemoryEnvVar string `yaml:"gpu-memory-env-var" json:"gpu-memory-env-var"`
+	// ModelWeightsSizeGB is the size of the model weights in GiB. Required for kv_cache_blocks
+	// derivation when GPU_DEVICE_<N>_MEMORY is used.
+	ModelWeightsSizeGB float64 `yaml:"model-weights-size-gb" json:"model-weights-size-gb"`
+	// NumHiddenLayers is the number of transformer layers. Required for kv_cache_blocks derivation.
+	NumHiddenLayers int `yaml:"num-hidden-layers" json:"num-hidden-layers"`
+	// NumKVHeads is the number of KV attention heads per layer. Required for kv_cache_blocks derivation.
+	NumKVHeads int `yaml:"num-kv-heads" json:"num-kv-heads"`
+	// HeadDim is the dimension of each KV attention head. Required for kv_cache_blocks derivation.
+	HeadDim int `yaml:"head-dim" json:"head-dim"`
 	// KVCacheDtype is the data type used for KV cache entries (float16, bfloat16, float8).
 	// When empty, "auto" is reported in vllm:cache_config_info, matching vLLM's default.
 	KVCacheDtype string `yaml:"kv-cache-dtype" json:"kv-cache-dtype"`
@@ -390,6 +408,7 @@ func newConfig() *Configuration {
 		ObjectToolCallNotRequiredParamProbability: 50,
 		ToolCallExtraCallProbability:              45,
 		KVCacheSize:                               1024,
+		GPUMemoryEnvVar:                           "GPU_DEVICE_0_MEMORY",
 		GPUMemoryUtilization:                      0.9,
 		TokenBlockSize:                            16,
 		ZMQEndpoint:                               "tcp://127.0.0.1:5557",
