@@ -26,8 +26,10 @@ const (
 	PromLabelMaxLora             = "max_lora"
 	PromLabelModelName           = "model_name"
 	PromLabelFinishReason        = "finish_reason"
-	PromLabelCacheBlockSize      = "block_size"
-	PromLabelCacheNumGPUBlocks   = "num_gpu_blocks"
+	PromLabelCacheBlockSize            = "block_size"
+	PromLabelCacheNumGPUBlocks         = "num_gpu_blocks"
+	PromLabelCacheDtype                = "cache_dtype"
+	PromLabelCacheGPUMemoryUtilization = "gpu_memory_utilization"
 )
 
 // modelInfo defines data about model returned by /models API

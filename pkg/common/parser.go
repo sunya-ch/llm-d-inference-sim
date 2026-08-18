@@ -151,6 +151,8 @@ func ParseCommandParamsAndLoadConfig() (*Configuration, error) {
 
 	f.BoolVar(&config.EnableKVCache, "enable-kvcache", config.EnableKVCache, "Defines if KV cache feature is enabled")
 	f.IntVar(&config.KVCacheSize, "kv-cache-size", config.KVCacheSize, "Maximum number of token blocks in kv cache")
+	f.Float64Var(&config.GPUMemoryUtilization, "gpu-memory-utilization", config.GPUMemoryUtilization, "Fraction of GPU memory to reserve for the KV cache pool (0.0–1.0); reported in vllm:cache_config_info")
+	f.StringVar(&config.KVCacheDtype, "kv-cache-dtype", config.KVCacheDtype, "Data type for KV cache entries (float16, bfloat16, float8); empty means auto, reported in vllm:cache_config_info")
 	f.Float64Var(&config.GlobalCacheHitThreshold, "global-cache-hit-threshold", 0, "Default cache hit threshold [0, 1] for all requests. If a request specifies cache_hit_threshold, it takes precedence")
 	f.IntVar(&config.TokenBlockSize, "block-size", config.TokenBlockSize, "Token block size for contiguous chunks of tokens, possible values: 8,16,32,64,128")
 	f.StringVar(&config.HashSeed, "hash-seed", config.HashSeed,

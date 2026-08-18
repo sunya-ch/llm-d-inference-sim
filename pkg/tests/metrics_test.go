@@ -931,7 +931,7 @@ var _ = Describe("Simulator metrics", Ordered, func() {
 			data, err := io.ReadAll(metricsResp.Body)
 			Expect(err).NotTo(HaveOccurred())
 			metrics := string(data)
-			Expect(metrics).To(ContainSubstring("vllm:cache_config_info{block_size=\"8\",num_gpu_blocks=\"16\"} 1"))
+			Expect(metrics).To(ContainSubstring("vllm:cache_config_info{block_size=\"8\",cache_dtype=\"auto\",gpu_memory_utilization=\"0.9\",num_gpu_blocks=\"16\"} 1"))
 		})
 	})
 

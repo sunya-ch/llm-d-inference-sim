@@ -220,6 +220,13 @@ type Configuration struct {
 	EnableKVCache bool `yaml:"enable-kvcache" json:"enable-kvcache"`
 	//  KVCacheSize is the maximum number of token blocks in kv cache, the default value is 1024
 	KVCacheSize int `yaml:"kv-cache-size" json:"kv-cache-size"`
+	// GPUMemoryUtilization is the fraction of GPU memory reserved for the KV cache pool,
+	// mirroring vLLM's --gpu-memory-utilization flag. Default is 0.9.
+	// Exposed as the gpu_memory_utilization label on vllm:cache_config_info.
+	GPUMemoryUtilization float64 `yaml:"gpu-memory-utilization" json:"gpu-memory-utilization"`
+	// KVCacheDtype is the data type used for KV cache entries (float16, bfloat16, float8).
+	// When empty, "auto" is reported in vllm:cache_config_info, matching vLLM's default.
+	KVCacheDtype string `yaml:"kv-cache-dtype" json:"kv-cache-dtype"`
 	// GlobalCacheHitThreshold is the default cache hit threshold (0-1] for all requests.
 	// If a request specifies cache_hit_threshold, it takes precedence over this global value.
 	GlobalCacheHitThreshold float64 `yaml:"global-cache-hit-threshold" json:"global-cache-hit-threshold"`
@@ -383,6 +390,7 @@ func newConfig() *Configuration {
 		ObjectToolCallNotRequiredParamProbability: 50,
 		ToolCallExtraCallProbability:              45,
 		KVCacheSize:                               1024,
+		GPUMemoryUtilization:                      0.9,
 		TokenBlockSize:                            16,
 		ZMQEndpoint:                               "tcp://127.0.0.1:5557",
 		KVEventsReplayQueueSize:                   1024,

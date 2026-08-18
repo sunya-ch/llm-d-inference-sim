@@ -268,7 +268,7 @@ When KV cache is enabled, the response `usage` object includes cached token info
 | `vllm:kv_cache_usage_perc` | Fraction of KV cache blocks currently in use (0–1). Updated after each request starts and finishes. |
 | `vllm:prefix_cache_hits_total` | Cumulative number of prompt tokens served from cache across all requests |
 | `vllm:prefix_cache_queries_total` | Cumulative number of prompt tokens checked against the cache across all requests |
-| `vllm:cache_config_info` | Static info gauge with labels `cache_dtype`, `num_gpu_blocks`, `num_cpu_blocks`, `block_size` |
+| `vllm:cache_config_info` | Static info gauge with labels `block_size`, `num_gpu_blocks`, `cache_dtype`, `gpu_memory_utilization` |
 
 The hit rate at any point is `prefix_cache_hits_total / prefix_cache_queries_total`.
 
